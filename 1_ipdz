@@ -1,0 +1,131 @@
+//@version=5
+indicator("M0ed", overlay=true, max_labels_count=500)
+
+bullcolor = color.rgb(109, 210, 62, 31)
+bearcolor = #e0503dc2
+
+gr_signal = "Signal Settings"
+gr_RiskManage = "Risk Management"
+
+// User Inputs
+showSignals       = input(true, "Show Signals", group=gr_signal)
+sensitivity       = input.float(2.4, "Sensitivity", 0.1, step=0.1, group=gr_signal)
+STuner            = input.int(10, "Signal Tuner(1-25)", minval=1, maxval=25, group=gr_signal)
+
+tpLabels          = input(true, "Dynamic Take Profit Labels", group=gr_RiskManage)
+ShowTpSlAreas     = input(true, "Show Take Profit/Stop-loss Area", group=gr_RiskManage)
+
+usePercSL         = input(false, "SL/TRAILING", inline="1", group=gr_RiskManage)
+percTrailingSL    = input.float(1, "", 0, step=0.1, inline="1", group=gr_RiskManage)
+useTP1            = input(true, "", inline="1", group=gr_RiskManage)
+multTP1           = input.float(1, "TP 1", 0, inline="1", group=gr_RiskManage)
+
+useTP2            = input(true, "", inline="4", group=gr_RiskManage)
+multTP2           = input.float(2, "TP 2", 0, inline="4", group=gr_RiskManage)
+useTP3            = input(true, "", inline="4", group=gr_RiskManage)
+multTP3           = input.float(3, "TP 3", 0, inline="4", group=gr_RiskManage)
+
+// Signal Logic
+src = close
+
+supertrend(src, factor, len) =>
+    atr = ta.atr(len)
+    upperBand = src + factor * atr
+    lowerBand = src - factor * atr
+    prevLowerBand = nz(lowerBand[1])
+    prevUpperBand = nz(upperBand[1])
+    lowerBand := lowerBand > prevLowerBand or close[1] < prevLowerBand ? lowerBand : prevLowerBand
+    upperBand := upperBand < prevUpperBand or close[1] > prevUpperBand ? upperBand : prevUpperBand
+    int direction = na
+    float superTrend = na
+    prevSuperTrend = superTrend[1]
+    if prevSuperTrend == prevUpperBand
+        direction := close > upperBand ? 1 : -1
+    else
+        direction := close < lowerBand ? -1 : 1
+    superTrend := direction == 1 ? lowerBand : direction == -1 ? upperBand : na
+
+supertrend_val = supertrend(close, sensitivity, STuner)
+
+// Buy and Sell Signals
+bull = ta.crossover(close, supertrend_val)
+bear = ta.crossunder(close, supertrend_val)
+
+countBull = ta.barssince(bull)
+countBear = ta.barssince(bear)
+
+trigger = nz(countBull, bar_index) < nz(countBear, bar_index) ? 1 : 0
+
+// Stop Loss and Take Profit Calculations
+atrBand = usePercSL ? (trigger ? low : high) * (percTrailingSL / 100) : ta.atr(14) * 2.2
+atrStop = trigger ? low - atrBand : high + atrBand
+
+lastTrade(src) => ta.valuewhen(bull or bear, src, 0)
+
+entry_y = lastTrade(close)
+stop_y = lastTrade(atrStop)
+tp1_y = (entry_y - lastTrade(atrStop)) * multTP1 + entry_y
+tp2_y = (entry_y - lastTrade(atrStop)) * multTP2 + entry_y
+tp3_y = (entry_y - lastTrade(atrStop)) * multTP3 + entry_y
+
+// Labels for TP/SL
+labelTpSl(cond, y, txt, color) =>
+    label labelTpSl = ShowTpSlAreas and cond ? label.new(bar_index + 1, y, txt, xloc.bar_index, yloc.price, color, label.style_label_left, color.white, size.normal) : na
+    label.delete(labelTpSl[1])
+
+labelTpSl(true, entry_y, "دخول: " + str.tostring(math.round_to_mintick(entry_y)), color.orange)
+labelTpSl(true, stop_y, "وقف خسارة: " + str.tostring(math.round_to_mintick(atrStop)), bearcolor)
+labelTpSl(useTP1 and multTP1 != 0, tp1_y, "TP 1: " + str.tostring(math.round_to_mintick(tp1_y)), bullcolor)
+labelTpSl(useTP2 and multTP2 != 0, tp2_y, "TP 2: " + str.tostring(math.round_to_mintick(tp2_y)), bullcolor)
+labelTpSl(useTP3 and multTP3 != 0, tp3_y, "TP 3: " + str.tostring(math.round_to_mintick(tp3_y)), bullcolor)
+
+// Lines for TP/SL
+lineTpSl(cond, y, color, style) =>
+    line lineTpSl = ShowTpSlAreas and cond ? line.new(bar_index - (trigger ? countBull : countBear), y, bar_index + 1, y, xloc.bar_index, extend.none, color, style) : na
+    line.delete(lineTpSl[1])
+
+lineTpSl(true, entry_y, color.orange, line.style_dashed)
+lineTpSl(true, stop_y, bearcolor, line.style_solid)
+lineTpSl(useTP1 and multTP1 != 0, tp1_y, bullcolor, line.style_dotted)
+lineTpSl(useTP2 and multTP2 != 0, tp2_y, bullcolor, line.style_dotted)
+lineTpSl(useTP3 and multTP3 != 0, tp3_y, bullcolor, line.style_dotted)
+
+// Buy/Sell Signal Labels
+if showSignals and bull
+    label.new(bar_index, low, "كول", xloc.bar_index, yloc.belowbar, bullcolor, label.style_label_up, #000000, size.normal)
+
+if showSignals and bear
+    label.new(bar_index, high, "بوت", xloc.bar_index, yloc.abovebar, bearcolor, label.style_label_down, #000000, size.normal)
+
+// Dynamic TP Labels based on RSI
+rsi = ta.rsi(close, 14)
+
+tpLabels(tp) =>
+    tp1Bull = ta.crossover(rsi, 70)
+    tp2Bull = ta.crossover(rsi, 75)
+    tp3Bull = ta.crossover(rsi, 80)
+    tp1Bear = ta.crossunder(rsi, 30)
+    tp2Bear = ta.crossunder(rsi, 25)
+    tp3Bear = ta.crossunder(rsi, 20)
+    
+    tp1Bull := tp1Bull and (nz(ta.barssince(tp1Bull)[1], 9999) > countBull)
+    tp2Bull := tp2Bull and (ta.barssince(tp1Bull)[1] <= countBull)
+    tp2Bull := tp2Bull and (nz(ta.barssince(tp2Bull)[1], 9999) > countBull)
+    tp3Bull := tp3Bull and (ta.barssince(tp2Bull)[1] <= countBull)
+    tp3Bull := tp3Bull and (nz(ta.barssince(tp3Bull)[1], 9999) > countBull)
+    
+    tp1Bear := tp1Bear and (nz(ta.barssince(tp1Bear)[1], 9999) > countBear)
+    tp2Bear := tp2Bear and (ta.barssince(tp1Bear)[1] <= countBear)
+    tp2Bear := tp2Bear and (nz(ta.barssince(tp2Bear)[1], 9999) > countBear)
+    tp3Bear := tp3Bear and (ta.barssince(tp2Bear)[1] <= countBear)
+    tp3Bear := tp3Bear and (nz(ta.barssince(tp3Bear)[1], 9999) > countBear)
+    
+    if tpLabels
+        trigger ? (tp == 1 ? tp1Bull : tp == 2 ? tp2Bull : tp3Bull) : (tp == 1 ? tp1Bear : tp == 2 ? tp2Bear : tp3Bear)
+
+plotshape(tpLabels(1), "", shape.xcross, location.abovebar, trigger ? bullcolor : na, 0, "TP 1", trigger ? bullcolor : na, false)
+plotshape(tpLabels(2), "", shape.xcross, location.abovebar, trigger ? bullcolor : na, 0, "TP 2", trigger ? bullcolor : na, false)
+plotshape(tpLabels(3), "", shape.xcross, location.abovebar, trigger ? bullcolor : na, 0, "TP 3", trigger ? bullcolor : na, false)
+plotshape(tpLabels(1), "", shape.xcross, location.belowbar, trigger ? na : bearcolor, 0, "TP 1", trigger ? na : bearcolor, false)
+plotshape(tpLabels(2), "", shape.xcross, location.belowbar, trigger ? na : bearcolor, 0, "TP 2", trigger ? na : bearcolor, false)
+plotshape(tpLabels(3), "", shape.xcross, location.belowbar, trigger ? na : bearcolor, 0, "TP 3", trigger ? na : bearcolor, false)
